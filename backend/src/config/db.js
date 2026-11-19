@@ -18,16 +18,16 @@ const pool = mysql.createPool({
   keepAliveInitialDelay: 10000,
   connectTimeout: 10000,
   multipleStatements: false, // never allow stacked queries from the app
-  timezone: '+05:30',
+  timezone: env.DB_TZ_OFFSET,
   dateStrings: false,
   supportBigNumbers: true,
   bigNumberStrings: false,
   charset: 'utf8mb4',
 });
 
-// Every connection works in IST so date grouping (today / this week) matches the owner's timezone.
+// Every connection works in the configured TZ (IST) so date grouping (today / this week) matches the owner.
 pool.pool.on('connection', (conn) => {
-  conn.query("SET time_zone = '+05:30'");
+  conn.query('SET time_zone = ?', [env.DB_TZ_OFFSET]);
 });
 
 /**

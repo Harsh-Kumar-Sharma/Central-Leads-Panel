@@ -1,7 +1,21 @@
 'use strict';
+const email = require('./emailService');
+const inApp = require('./notificationService');
+
 /**
- * Hook called after a lead is saved. No-op in v1.
- * Phase 2: email / WhatsApp / in-app notifications plug in here.
+ * Called after a lead is saved (never for spam). Runs in the background:
+ * it must never block or fail the ingest response, so every channel is
+ * isolated and errors are only logged.
+ *
+ * Channels: in-app (rows + live SSE push) and email.
  */
-// eslint-disable-next-line no-unused-vars
-exports.notify = async (lead) => {};
+async function notifyNewLead(lead) {
+  if (!lead || !lead.id || lead.status === 'spam') return;
+  await Promise.allSettled([
+    inApp.createForLead(lead.id).catch((e) => console.error(`[notify] in-app for lead #${lead.id} failed:`, e.message)),
+    email.queueLeadEmail(lead.id).catch((e) => console.error(`[notify] email for lead #${lead.id} failed:`, e.message)),
+  ]);
+}
+
+exports.notifyNewLead = notifyNewLead;
+exports.notify = notifyNewLead; // backwards-compatible name

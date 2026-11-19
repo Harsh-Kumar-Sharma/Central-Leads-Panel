@@ -8,6 +8,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { generateApiKey } = require('../utils/apiKey');
 const { idParam } = require('../validators/leadQuery');
 const { siteBody, userCreate, userUpdate } = require('../validators/adminSchemas');
+const hub = require('../services/sseHub');
 
 const router = express.Router();
 router.use(requireAuth, requireRole('super_admin'));
@@ -162,6 +163,7 @@ router.put('/users/:id', asyncHandler(async (req, res) => {
   } finally {
     conn.release();
   }
+  hub.recheckUsers([id]); // deactivated / password reset -> live streams closed now, not at next heartbeat
   res.json(await getUser(id));
 }));
 

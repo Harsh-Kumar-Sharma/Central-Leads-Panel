@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
 const db = require('../config/db');
@@ -12,6 +13,7 @@ exports.signToken = (user) =>
     expiresIn: env.JWT_EXPIRES_IN,
     issuer: JWT_OPTS.issuer,
     audience: JWT_OPTS.audience,
+    jwtid: crypto.randomBytes(16).toString('hex'), // lets a single token be revoked on sign-out
   });
 
 /**
@@ -33,15 +35,21 @@ exports.requireAuth = async (req, res, next) => {
     const userId = Number(payload.sub);
     if (!Number.isInteger(userId) || userId <= 0) throw new HttpError(401, 'Invalid session');
 
+    const jti = typeof payload.jti === 'string' ? payload.jti : null;
+    // One query: user state + whether this exact token was signed out.
     const [rows] = await db.execute(
-      'SELECT id, name, email, role, is_active, token_version FROM users WHERE id = ? LIMIT 1',
-      [userId]
+      `SELECT u.id, u.name, u.email, u.role, u.is_active, u.token_version,
+              (SELECT 1 FROM revoked_tokens r WHERE r.jti = ? LIMIT 1) AS revoked
+       FROM users u WHERE u.id = ? LIMIT 1`,
+      [jti || '', userId]
     );
     const user = rows[0];
-    if (!user || !user.is_active || user.token_version !== payload.tv) {
+    if (!user || !user.is_active || user.token_version !== payload.tv || user.revoked) {
       throw new HttpError(401, 'Session is no longer valid');
     }
     req.user = { id: user.id, name: user.name, email: user.email, role: user.role };
+    // Token metadata for long-lived connections (SSE) that must re-validate the session later.
+    req.auth = { tv: payload.tv, exp: payload.exp, jti };
     next();
   } catch (err) {
     next(err);

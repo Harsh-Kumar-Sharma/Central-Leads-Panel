@@ -8,6 +8,7 @@ import Chip from '../components/Chip.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import LeadDrawer from '../components/LeadDrawer.vue';
 import AppIcon from '../components/AppIcon.vue';
+import { useNotificationsStore } from '../stores/notifications';
 
 const route = useRoute();
 const router = useRouter();
@@ -90,9 +91,9 @@ const hasFilters = computed(() => { const f = filters.value; return !!(f.site_id
 const clearFilters = () => { search.value = ''; router.replace({ query: {} }); };
 
 let reqSeq = 0;
-async function load() {
+async function load({ silent = false } = {}) {
   const seq = ++reqSeq;
-  loading.value = true;
+  if (!silent) loading.value = true;
   error.value = '';
   try {
     const { data } = await api.get('/leads', { params: apiParams.value });
@@ -106,7 +107,21 @@ async function load() {
   }
 }
 // Compare by value so opening the drawer (which only changes ?lead=) does not refetch the list.
-watch(() => JSON.stringify(apiParams.value), load);
+watch(() => JSON.stringify(apiParams.value), () => load());
+
+// Links from notifications / emails use ?open=<lead id>: turn it into the drawer's ?lead=.
+watch(() => route.query.open, (open) => {
+  if (open === undefined) return;
+  const n = Number(open);
+  const next = { ...route.query };
+  delete next.open;
+  if (Number.isInteger(n) && n > 0) next.lead = String(n);
+  router.replace({ query: next });
+}, { immediate: true });
+
+// A new lead arrived live: refresh the list quietly (only on page 1, where it would appear).
+const notifications = useNotificationsStore();
+watch(() => notifications.lastEvent, () => { if (filters.value.page === 1) load({ silent: true }); });
 
 onMounted(async () => {
   load();

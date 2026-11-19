@@ -13,6 +13,7 @@ const routes = [
       { path: 'leads', name: 'leads', component: () => import('../views/LeadsView.vue'), meta: { title: 'Leads', subtitle: 'Every enquiry and quote request, filtered your way', crumbs: ['Overview', 'Leads'] } },
       { path: 'admin/sites', name: 'admin-sites', component: () => import('../views/AdminSitesView.vue'), meta: { title: 'Sites & API keys', subtitle: 'Websites, their keys and integration code', crumbs: ['Administration', 'Sites'], admin: true } },
       { path: 'admin/users', name: 'admin-users', component: () => import('../views/AdminUsersView.vue'), meta: { title: 'Users & access', subtitle: 'Team members, roles and site access', crumbs: ['Administration', 'Users'], admin: true } },
+      { path: 'admin/notifications', name: 'admin-notifications', component: () => import('../views/AdminNotificationsView.vue'), meta: { title: 'Notification settings', subtitle: 'SMTP, recipients and email delivery log', crumbs: ['Administration', 'Notifications'], admin: true } },
       { path: 'account', name: 'account', component: () => import('../views/AccountView.vue'), meta: { title: 'My account', subtitle: 'Your profile and password', crumbs: ['Account', 'My account'] } },
     ],
   },
@@ -32,9 +33,12 @@ router.beforeEach(async (to) => {
   document.title = to.meta.title ? `${to.meta.title} · Central Leads` : 'Central Leads Panel';
 });
 
-setUnauthorizedHandler(() => {
+function handleUnauthorized() {
   useAuthStore().logout();
   if (router.currentRoute.value.name !== 'login') router.replace({ name: 'login' });
-});
+}
+setUnauthorizedHandler(handleUnauthorized);
+// The live notification stream (fetch-based, outside axios) reports ended sessions this way.
+window.addEventListener('clp:unauthorized', handleUnauthorized);
 
 export default router;

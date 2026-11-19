@@ -43,9 +43,12 @@ Log in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`, then change the password
 | `JWT_SECRET` | ≥ 32 random chars. The server refuses to start in production with a weak secret. Generate: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
 | `JWT_EXPIRES_IN` | Session length, e.g. `12h` |
 | `CORS_PANEL_ORIGIN` | Dashboard origin(s), comma separated, e.g. `https://leads.example.com` |
-| `TRUST_PROXY` | `1` behind Nginx (so rate limits see the real client IP), `0` otherwise |
+| `TRUST_PROXY` | `1` behind Nginx (so rate limits see the real client IP), `0` otherwise. The server warns at start-up if it is `0` in production. |
+| `HOST` | Interface the API listens on. Default `127.0.0.1`, so only Nginx on the same server can reach port 4000. |
 | `SEED_ADMIN_NAME`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Used only by `npm run seed` |
 | `TZ` | `Asia/Kolkata` |
+| `SECRET_ENCRYPTION_KEY` | 32 bytes (64 hex chars) that encrypt stored SMTP passwords. **Required in production.** Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. If it changes, re-enter the SMTP passwords. |
+| `APP_BASE_URL` | Public dashboard URL used in "View lead" email links, e.g. `https://leads.example.com` |
 
 Recommended least-privilege MySQL user:
 
@@ -113,6 +116,21 @@ server {
         proxy_read_timeout 60s;
     }
 
+    # Live notifications (Server-Sent Events): must not be buffered or cut after 60s
+    location = /api/notifications/stream {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        chunked_transfer_encoding on;
+    }
+
     # Dashboard (Vue SPA)
     root /var/www/central-leads-panel/frontend/dist;
     index index.html;
@@ -144,7 +162,7 @@ Get a certificate with `certbot --nginx -d leads.example.com`. Do **not** expose
 
 ```bash
 git pull
-cd backend && npm ci --omit=dev && npm run migrate && pm2 restart central-leads-api
+cd backend && npm ci --omit=dev && npm run migrate && pm2 restart central-leads-api   # always migrate BEFORE restarting
 cd ../frontend && npm ci && npm run build
 ```
 
@@ -272,9 +290,11 @@ Site scoping is enforced in the backend on every query (lists, detail, stats, ex
 ## 5. Security summary
 
 - Passwords: bcrypt cost 12, minimum 8 chars. Login limited to 5 failed attempts / 15 min per IP+email, plus a per-IP ceiling. Constant-time response for unknown emails.
-- JWT (HS256, pinned algorithm, issuer/audience). The user is re-checked in the DB on every request, so deactivation, role changes and password changes apply immediately (password change signs out other sessions).
-- Ingest: per-site keys, Origin allow-list with exact CORS (never `*`), 10 req/min per IP+key + global limit, 100 KB body limit, honeypot, zod validation, control-character stripping.
-- Dashboard API: CORS locked to `CORS_PANEL_ORIGIN`, Helmet security headers, HTTP parameter pollution protection, `Cache-Control: no-store`.
+- JWT (HS256, pinned algorithm, issuer/audience, unique id). The user is re-checked in the DB on every request, so deactivation, role changes and password changes apply immediately (password change signs out other sessions). **Sign out revokes that token on the server**, so a copied token stops working. Live notification streams of a deactivated/reset user or a signed-out token are closed immediately.
+- Change password: max 5 wrong current-password attempts per 15 min per user.
+- Ingest: per-site keys, Origin allow-list with exact CORS (never `*`), 100 KB body limit, honeypot, zod validation, control-character stripping. Rate limits: 200/min per IP before the key lookup, then 10/min per IP+key and 300/min per site, so junk traffic with bad keys can never block real websites. Unknown form fields never cause an error: they go into `extra` (names sanitised, max 20, values cut to 2000 chars) and the full body is kept in `raw_payload`.
+- SMTP: the saved password is only ever reused for the same host/port/username (changing the server requires re-entering it); cloud-metadata/link-local hosts are refused, and loopback is refused in production.
+- Dashboard API: CORS locked to `CORS_PANEL_ORIGIN`, Helmet security headers, `Cache-Control: no-store`; repeated/array query params are rejected by the validators.
 - SQL: parameterized queries everywhere; sort columns and pagination are whitelisted / validated.
 - Errors never leak internals (generic 500, details only in server logs).
 - UI renders all lead data as plain text (no `v-html`); only `http(s)` source URLs become links; CSV/Excel export is protected against formula injection.
@@ -295,6 +315,73 @@ GET/POST /api/admin/sites    PUT /api/admin/sites/:id    POST /api/admin/sites/:
 GET/POST /api/admin/users    PUT /api/admin/users/:id
 ```
 
-## 7. Phase 2 roadmap (out of scope for v1)
+## 7. Email notifications (Phase 2)
 
-Email / WhatsApp notifications on new leads (hook: `backend/src/services/notify.js`), in-app notification bell, audit log, assigning leads to staff, follow-up reminders, 2FA.
+Spec: [docs/PHASE2_NOTIFICATIONS_SPEC.md](docs/PHASE2_NOTIFICATIONS_SPEC.md)
+
+Every new (non-spam) lead sends **one email** to the company's recipients plus the global recipients (de-duplicated; `to` beats `cc` beats `bcc`; if there is no `to`, the first cc/bcc is promoted). `Reply-To` is the visitor's email, so replying goes straight to them. The ingest API never waits for SMTP.
+
+**SMTP selection:** the company's own SMTP if it is enabled, otherwise the global SMTP. If neither is set, the lead is still saved and the email log shows `No SMTP configured`.
+
+**Retries:** attempt 1 immediately, attempt 2 after 1 minute, attempt 3 after 5 minutes, then `failed`. The queue lives in the `email_logs` table, so pending retries survive a restart (picked up on startup and checked every minute). Failed emails can be retried by hand.
+
+### Setting it up (Admin → Notifications)
+
+1. **Global SMTP** tab: fill host, port, SSL/TLS, username, password, from name/email (or use a *Quick fill* preset), turn on **Send emails with this global SMTP**, press **Send test email** to check it, then **Save**. The password field then shows "Saved and encrypted"; leave it blank on later edits to keep it.
+2. **Global recipients** tab: people who get a copy of every company's leads (To / CC / BCC).
+3. **Companies** tab: pick a company, add its recipients (each can be paused), and optionally switch on **Use a separate SMTP for this company**. The top card previews exactly which SMTP and which final recipient list a new lead from that company will use.
+4. **Email log** tab: every email with company, recipients, SMTP used, status, attempts and the SMTP error; failed emails have a **Retry** button.
+
+Each user sets their own bell preferences under **My account → Notifications** (bell on/off, all or selected companies, optional sound).
+
+### SMTP settings
+
+| Provider | Host | Port / Secure |
+|---|---|---|
+| Gmail / Google Workspace | `smtp.gmail.com` | `587` + secure **off** (STARTTLS) or `465` + secure **on** |
+| Microsoft 365 | `smtp.office365.com` | `587` + secure off |
+| Zoho | `smtp.zoho.in` | `465` + secure on |
+
+- **587 vs 465:** port 587 starts plain and upgrades with STARTTLS (set *secure* off). Port 465 is TLS from the first byte (set *secure* on). The panel always requires TLS before sending a password to a non-local server.
+- **Gmail / Workspace:** turn on 2-Step Verification and create an **App password** (Google Account → Security → App passwords). Use the 16-character app password, not the normal account password. The *from email* should be the same mailbox (or a verified alias).
+- Passwords are stored encrypted (AES-256-GCM) and are never returned by the API (`has_password: true` instead). Leaving the password blank on update keeps the saved one.
+
+### Admin API (super admin only)
+
+```
+GET/PUT  /api/admin/settings/smtp-global          POST /api/admin/settings/smtp-global/test  { to, config? }
+GET/PUT  /api/admin/settings/global-recipients    [{ email, mode: to|cc|bcc }]
+GET/PUT  /api/admin/sites/:id/smtp                 POST /api/admin/sites/:id/smtp/test         { to, config? }
+GET/PUT  /api/admin/sites/:id/recipients           [{ email, mode, is_active }]
+GET      /api/admin/sites/:id/notification-preview → which SMTP + final recipient list
+GET      /api/admin/email-logs?site_id=&status=&page=&page_size=
+POST     /api/admin/email-logs/:id/retry
+```
+
+### Testing locally without a real mailbox
+
+Run any local test SMTP server on `127.0.0.1` (for example the `smtp-server` dev dependency), save it as the global SMTP with secure off, then submit a lead and check **email-logs**. "Send test email" returns the exact SMTP error (wrong password, refused connection, TLS problems, …).
+
+## 8. In-app notifications (bell + live updates)
+
+When a non-spam lead arrives, one notification row is created for every **active super admin** and every **active user assigned to that company**, respecting each user's preferences (bell on/off, and "notify me for these companies"). Users who are online receive it instantly over **Server-Sent Events**.
+
+- Access is re-checked everywhere: a user only ever receives, lists, counts or marks notifications for companies they can currently see. If access to a company is removed, its old notifications disappear from that user's list.
+- The stream authenticates with the normal `Authorization: Bearer` header (a fetch-based SSE client), so the token never appears in URLs or proxy logs. Tokens in the query string are rejected.
+- Every 25 seconds the server sends a heartbeat and re-validates each open stream: a deactivated user, a changed password or an expired token closes the stream (`event: session_ended`).
+- Limits: 5 open streams per user (the oldest is dropped), 500 in total. Streams are kept in memory, so the API must run as **one** PM2 instance.
+- Notifications older than 90 days are deleted by a daily cleanup.
+
+```
+GET  /api/notifications?limit=20&unread_only=0   → { data: [...], unread_count }
+GET  /api/notifications/unread-count             → { unread_count }
+POST /api/notifications/:id/read                 POST /api/notifications/read-all
+GET  /api/notifications/prefs                    PUT /api/notifications/prefs { bell_enabled, site_ids: null | [ids] }
+GET  /api/notifications/stream                   → SSE: event "ready" { unread_count }, "new_lead" {...}, "session_ended"
+```
+
+`new_lead` data: `{ notification_id, lead_id, site_id, site_name, site_color, type, name, title, body, created_at }`.
+
+## 9. Roadmap
+
+Audit log, assigning leads to staff, follow-up reminders, 2FA.

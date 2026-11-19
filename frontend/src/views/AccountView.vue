@@ -1,9 +1,23 @@
 <script setup>
-import { ref, reactive } from 'vue';
+import { ref, reactive, onMounted, nextTick, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import api, { tokenStore, errorMessage } from '../api/client';
 import { useAuthStore } from '../stores/auth';
+import { useNotificationsStore } from '../stores/notifications';
+import NotificationSettings from '../components/NotificationSettings.vue';
 
 const auth = useAuthStore();
+const notifications = useNotificationsStore();
+const route = useRoute();
+
+// /account#notifications (from the bell and user menu) jumps to the notification settings.
+async function scrollToHash() {
+  if (route.hash !== '#notifications') return;
+  await nextTick();
+  setTimeout(() => document.getElementById('notifications')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+}
+onMounted(scrollToHash);
+watch(() => route.hash, scrollToHash);
 const form = reactive({ current_password: '', new_password: '', confirm: '' });
 const errors = ref({});
 const message = ref('');
@@ -22,6 +36,7 @@ async function submit() {
     // Server rotates the session: other devices are signed out, this one gets a fresh token.
     tokenStore.set(data.token);
     auth.token = data.token;
+    notifications.reconnect(); // the old stream's token is no longer valid
     Object.assign(form, { current_password: '', new_password: '', confirm: '' });
     message.value = 'Password changed. Other sessions have been signed out.';
   } catch (e) {
@@ -35,7 +50,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-lg space-y-4">
+  <div class="mx-auto max-w-2xl space-y-4">
     <div class="card p-5">
       <h2 class="font-semibold">Profile</h2>
       <dl class="mt-3 grid grid-cols-[7rem_1fr] gap-y-2 text-sm">
@@ -68,5 +83,7 @@ async function submit() {
         <button class="btn btn-primary" :disabled="saving || !form.current_password || !form.new_password">{{ saving ? 'Saving…' : 'Change password' }}</button>
       </div>
     </form>
+
+    <NotificationSettings />
   </div>
 </template>

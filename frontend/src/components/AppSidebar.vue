@@ -25,6 +25,7 @@ const sections = computed(() => {
       items: [
         { to: '/admin/sites', label: 'Sites & API keys', icon: 'globe' },
         { to: '/admin/users', label: 'Users & access', icon: 'users' },
+        { to: '/admin/notifications', label: 'Notifications', icon: 'bell' },
       ],
     });
   }

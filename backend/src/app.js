@@ -2,7 +2,6 @@
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
-const hpp = require('hpp');
 const env = require('./config/env');
 const { globalLimiter } = require('./middleware/rateLimit');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
@@ -38,11 +37,14 @@ const panelCors = cors({
   maxAge: 600,
 });
 const dashboard = express.Router();
-dashboard.use(panelCors, express.json({ limit: '100kb', strict: true }), hpp());
+dashboard.use(panelCors, express.json({ limit: '100kb', strict: true }));
+// (No hpp: on Express 5 it cannot modify req.query; repeated params are handled by the zod schemas.)
 dashboard.use('/auth', require('./routes/auth'));
 dashboard.use('/stats', require('./routes/stats'));
 dashboard.use('/leads', require('./routes/leads'));
+dashboard.use('/notifications', require('./routes/notifications'));
 dashboard.use('/admin', require('./routes/admin'));
+dashboard.use('/admin', require('./routes/adminNotifications'));
 dashboard.use('/sites', require('./routes/sites'));
 app.use('/api', dashboard);
 

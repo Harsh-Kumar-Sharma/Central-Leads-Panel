@@ -6,7 +6,8 @@ const db = require('../config/db');
 const asyncHandler = require('../utils/asyncHandler');
 const HttpError = require('../utils/httpError');
 const { signToken, requireAuth, getAllowedSiteIds } = require('../middleware/auth');
-const { loginLimiter, loginIpLimiter } = require('../middleware/rateLimit');
+const { loginLimiter, loginIpLimiter, changePasswordLimiter } = require('../middleware/rateLimit');
+const hub = require('../services/sseHub');
 
 const router = express.Router();
 // Used to keep login timing constant when the email does not exist (prevents user enumeration).
@@ -48,7 +49,7 @@ const changeSchema = z.object({
   new_password: z.string().min(8, 'Password must be at least 8 characters').max(200),
 });
 
-router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
+router.post('/change-password', requireAuth, changePasswordLimiter, asyncHandler(async (req, res) => {
   const { current_password, new_password } = changeSchema.parse(req.body);
   const [[row]] = await db.execute('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
   if (!row || !(await bcrypt.compare(current_password, row.password_hash))) {
@@ -58,7 +59,21 @@ router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
   // Bumping token_version logs out every other session using the old password.
   await db.execute('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?', [hash, req.user.id]);
   const [[u]] = await db.execute('SELECT id, token_version FROM users WHERE id = ?', [req.user.id]);
+  hub.recheckUsers([req.user.id]); // close live streams that still use an old token, right away
   res.json({ success: true, token: signToken(u) });
+}));
+
+/**
+ * Sign out: revokes THIS token on the server (other devices stay signed in), so a copied
+ * token is useless after sign-out instead of staying valid until it expires.
+ */
+router.post('/logout', requireAuth, asyncHandler(async (req, res) => {
+  const { jti, exp } = req.auth;
+  if (jti && exp) {
+    await db.execute('INSERT IGNORE INTO revoked_tokens (jti, user_id, expires_at) VALUES (?, ?, FROM_UNIXTIME(?))', [jti, req.user.id, exp]);
+    hub.closeToken(jti);
+  }
+  res.json({ success: true });
 }));
 
 module.exports = router;

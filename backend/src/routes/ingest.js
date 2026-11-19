@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { requireSiteKey, ingestPreflight } = require('../middleware/siteKey');
-const { ingestLimiter, ingestGlobalLimiter } = require('../middleware/rateLimit');
+const { ingestLimiter, ingestIpLimiter, ingestSiteLimiter } = require('../middleware/rateLimit');
 const { parseLead } = require('../validators/leadSchema');
 const { zodToErrors } = require('../middleware/errorHandler');
 const leadService = require('../services/leadService');
@@ -10,7 +10,9 @@ const router = express.Router();
 
 router.options('/leads', ingestPreflight);
 
-router.post('/leads', ingestGlobalLimiter, requireSiteKey, ingestLimiter, async (req, res) => {
+// Order matters: a cheap per-IP limit protects the key lookup; only requests with a VALID key
+// count toward the per-key and per-site limits, so junk traffic cannot block real websites.
+router.post('/leads', ingestIpLimiter, requireSiteKey, ingestLimiter, ingestSiteLimiter, async (req, res) => {
   try {
     if (!req.is('application/json')) {
       return res.status(415).json({ success: false, message: 'Content-Type must be application/json' });

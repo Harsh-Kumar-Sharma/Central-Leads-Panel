@@ -6,6 +6,7 @@ import { useUiStore } from '../stores/ui';
 import { useTheme } from '../utils/theme';
 import AppIcon from './AppIcon.vue';
 import AppearanceMenu from './AppearanceMenu.vue';
+import NotificationBell from './NotificationBell.vue';
 
 const auth = useAuthStore();
 const ui = useUiStore();
@@ -42,7 +43,7 @@ watch(() => route.fullPath, () => { menuOpen.value = false; });
 
 function logout() {
   menuOpen.value = false;
-  auth.logout();
+  auth.signOut();
   router.replace({ name: 'login' });
 }
 </script>
@@ -79,6 +80,7 @@ function logout() {
       <RouterLink to="/leads" class="btn-ghost rounded-xl p-2.5 md:hidden" aria-label="Search leads"><AppIcon name="search" :size="20" /></RouterLink>
 
       <!-- Appearance: colour mode + accent palette -->
+      <NotificationBell />
       <AppearanceMenu />
 
       <!-- User menu -->
@@ -107,6 +109,7 @@ function logout() {
             </div>
             <div class="p-1.5">
               <RouterLink to="/account" class="menu-item" role="menuitem"><AppIcon name="account" :size="18" /> My account</RouterLink>
+              <RouterLink to="/account#notifications" class="menu-item" role="menuitem"><AppIcon name="bell" :size="18" /> Notification settings</RouterLink>
               <button class="menu-item w-full" role="menuitem" @click="toggleTheme">
                 <AppIcon :name="theme === 'dark' ? 'sun' : 'moon'" :size="18" />
                 {{ theme === 'dark' ? 'Light theme' : 'Dark theme' }}

@@ -4,9 +4,18 @@ import { useRoute } from 'vue-router';
 import { useUiStore } from '../stores/ui';
 import AppSidebar from '../components/AppSidebar.vue';
 import AppHeader from '../components/AppHeader.vue';
+import ToastStack from '../components/ToastStack.vue';
+import { useNotificationsStore } from '../stores/notifications';
 
 const ui = useUiStore();
 const route = useRoute();
+const notifications = useNotificationsStore();
+
+// Live notifications for the whole logged-in session; closed on logout (layout unmounts).
+onMounted(() => notifications.connect());
+onBeforeUnmount(() => notifications.disconnect());
+// A new lead also changes the sidebar's "new & unread" lead badge.
+watch(() => notifications.lastEvent, () => ui.refreshUnread());
 
 // Close the mobile drawer on navigation; refresh the unread badge as the user moves around.
 watch(() => route.fullPath, () => { ui.mobileOpen = false; ui.refreshUnread(); });
@@ -30,6 +39,7 @@ onBeforeUnmount(() => { clearInterval(timer); document.removeEventListener('visi
     </Transition>
 
     <AppSidebar />
+    <ToastStack />
 
     <div class="flex min-w-0 flex-1 flex-col">
       <AppHeader />

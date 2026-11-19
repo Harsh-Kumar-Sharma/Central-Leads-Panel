@@ -27,6 +27,14 @@ export const useAuthStore = defineStore('auth', {
         this.loaded = true;
       }
     },
+    /** User-initiated sign out: revoke this token on the server, then clear it locally. */
+    async signOut() {
+      const token = this.token;
+      this.logout();
+      if (token) {
+        try { await api.post('/auth/logout', null, { headers: { Authorization: `Bearer ${token}` }, timeout: 5000 }); } catch { /* already invalid / offline */ }
+      }
+    },
     logout() {
       this.user = null;
       this.token = null;

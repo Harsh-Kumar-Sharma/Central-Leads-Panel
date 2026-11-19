@@ -26,7 +26,7 @@ export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    const isLogin = err.config?.url?.includes('/auth/login');
+    const isLogin = /\/auth\/(login|logout)/.test(err.config?.url || '');
     if (err.response?.status === 401 && !isLogin && onUnauthorized) onUnauthorized();
     return Promise.reject(err);
   }

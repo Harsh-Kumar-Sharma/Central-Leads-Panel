@@ -20,7 +20,8 @@ exports.errorHandler = (err, req, res, next) => {
   if (err.type === 'entity.too.large') {
     return res.status(413).json({ success: false, message: 'Payload too large' });
   }
-  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+  // Only a body-parser failure means the client sent bad JSON; any other SyntaxError is a server bug.
+  if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ success: false, message: 'Invalid JSON body' });
   }
   if (err.expose && err.status && err.status < 500) {

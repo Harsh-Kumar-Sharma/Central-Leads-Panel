@@ -1,13 +1,8 @@
 'use strict';
 const db = require('../config/db');
-const { notify } = require('./notify');
+const { notifyNewLead } = require('./notify');
 
-/** Builds a "site_id IN (...)" scope clause. Returns null when the user can see nothing. */
-function scopeClause(allowedSiteIds, column = 'l.site_id') {
-  if (allowedSiteIds === null) return { sql: '1=1', params: [] };
-  if (!allowedSiteIds.length) return null;
-  return { sql: `${column} IN (${allowedSiteIds.map(() => '?').join(',')})`, params: [...allowedSiteIds] };
-}
+const { scopeClause } = require('../utils/scope');
 exports.scopeClause = scopeClause;
 
 const SORT_COLUMNS = { created_at: 'l.created_at', name: 'l.name', status: 'l.status', site: 's.name' };
@@ -160,6 +155,7 @@ exports.createLead = async ({ siteId, data, rawBody, meta, isSpam }) => {
     ]
   );
   const lead = { id: r.insertId, site_id: siteId, ...data, status: isSpam ? 'spam' : 'new' };
-  if (!isSpam) notify(lead).catch((e) => console.error('[notify] failed:', e.message));
+  // Fire-and-forget: the ingest response never waits for (or fails because of) notifications.
+  if (!isSpam) setImmediate(() => notifyNewLead(lead).catch((e) => console.error('[notify] failed:', e.message)));
   return r.insertId;
 };

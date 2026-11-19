@@ -21,7 +21,8 @@ const extraValue = z.union([
   z.null(),
 ]);
 
-const extraKey = (k) => /^[A-Za-z0-9 _\-.]{1,64}$/.test(k);
+// Letters/digits in any script (Hindi labels etc.), space, _ - .
+const extraKey = (k) => /^[\p{L}\p{M}\p{N} _\-.]{1,64}$/u.test(k);
 
 const leadSchema = z
   .object({
@@ -61,19 +62,35 @@ function parseLead(body) {
     return { success: false, error: { issues: [{ path: ['_'], message: 'Body must be a JSON object' }] } };
   }
   const input = {};
-  let extra = {};
-  if (body.extra && typeof body.extra === 'object' && !Array.isArray(body.extra)) extra = { ...body.extra };
-  else if (body.extra !== undefined && body.extra !== null) extra.extra = body.extra;
+  const extra = {};
+  const FORBIDDEN = new Set(['__proto__', 'constructor', 'prototype']);
 
-  for (const [k, v] of Object.entries(body)) {
-    if (k === 'extra') continue;
-    if (KNOWN.includes(k)) input[k] = v;
-    else if (k !== '__proto__' && k !== 'constructor' && k !== 'prototype') extra[k] = v;
+  // 1) An explicit `extra` object is the site's own mapping: validated strictly (spec limits).
+  if (body.extra && typeof body.extra === 'object' && !Array.isArray(body.extra)) {
+    for (const [k, v] of Object.entries(body.extra)) {
+      if (FORBIDDEN.has(k)) continue;
+      extra[k] = v !== null && typeof v === 'object' ? JSON.stringify(v).slice(0, MAX_EXTRA_VALUE) : v;
+    }
   }
-  // Flatten non-scalar extra values into JSON strings so nothing is lost.
-  for (const [k, v] of Object.entries(extra)) {
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete extra[k]; continue; }
-    if (v !== null && typeof v === 'object') extra[k] = JSON.stringify(v).slice(0, MAX_EXTRA_VALUE);
+
+  // 2) Unknown top-level fields must never cause an error (spec §3): they are moved into
+  //    `extra` leniently — key names sanitised, values stringified/truncated, and only up to
+  //    the 20-key limit. Nothing is lost: the full original body is kept in raw_payload.
+  const unknown = Object.entries(body).filter(([k]) => !KNOWN.includes(k) && !FORBIDDEN.has(k));
+  if (body.extra !== undefined && body.extra !== null && (typeof body.extra !== 'object' || Array.isArray(body.extra))) {
+    unknown.unshift(['extra', body.extra]);
+  }
+  for (const [k, v] of Object.entries(body)) if (KNOWN.includes(k) && k !== 'extra') input[k] = v;
+  for (const [rawKey, v] of unknown) {
+    if (Object.keys(extra).length >= MAX_EXTRA_KEYS) break;
+    let key = String(rawKey).replace(/[^\p{L}\p{M}\p{N} _\-.]/gu, '_').replace(/_+/g, '_')
+      .replace(/^[\s_]+|[\s_]+$/g, '').slice(0, 64).trim() || 'field';
+    while (Object.prototype.hasOwnProperty.call(extra, key) || FORBIDDEN.has(key)) key = `${key.slice(0, 60)}_${Math.floor(Math.random() * 900 + 100)}`;
+    let value = v;
+    if (value !== null && typeof value === 'object') value = JSON.stringify(value);
+    if (typeof value === 'string') value = clean(value).slice(0, MAX_EXTRA_VALUE);
+    if (typeof value === 'number' && !Number.isFinite(value)) value = String(value);
+    extra[key] = value;
   }
   if (Object.keys(extra).length) input.extra = extra;
   return leadSchema.safeParse(input);

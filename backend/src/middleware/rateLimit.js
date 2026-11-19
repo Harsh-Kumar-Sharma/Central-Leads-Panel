@@ -23,13 +23,24 @@ exports.ingestLimiter = rateLimit({
   handler: json429('Too many submissions. Please try again in a minute.'),
 });
 
-// Ingest: global ceiling across all keys (protects DB from floods).
-exports.ingestGlobalLimiter = rateLimit({
+// Ingest, BEFORE the key lookup: per-IP ceiling so floods of junk/invalid keys are cut off cheaply.
+// Generous enough for one web server that posts leads for many sites.
+exports.ingestIpLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 600,
+  limit: 200,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  keyGenerator: () => 'ingest-global',
+  handler: json429('Too many requests, slow down.'),
+});
+
+// Ingest, AFTER a valid key: ceiling per site across all IPs (global limit per spec).
+// Keyed per site so abuse of one site's key can never block the other websites.
+exports.ingestSiteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => `ingest-site|${req.site.id}`,
   handler: json429('Service busy, please try again shortly.'),
 });
 
@@ -45,6 +56,18 @@ exports.loginLimiter = rateLimit({
     return `${ipKeyGenerator(req.ip)}|${email}`;
   },
   handler: json429('Too many login attempts. Try again in 15 minutes.'),
+});
+
+// Change password: 5 wrong "current password" guesses / 15 min per user (a stolen token
+// must not be usable to brute-force the real password).
+exports.changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `chpw|${req.user.id}`,
+  handler: json429('Too many attempts. Try again in 15 minutes.'),
 });
 
 // Login: per-IP ceiling regardless of email (stops credential stuffing across many emails).

@@ -38,27 +38,31 @@ const COLUMNS = [
   { header: 'Source URL', key: 'source_url', width: 40 },
 ];
 
-function toRow(r) {
+// CSV needs the formula guard; XLSX cells are written as plain strings (never formulas),
+// so there the apostrophe would just show up as text (e.g. on every +91 phone number).
+const plainCell = (v) => (v === null || v === undefined ? '' : String(v));
+
+function toRow(r, cell = safeCell) {
   return {
     id: r.id,
-    site_name: safeCell(r.site_name),
+    site_name: cell(r.site_name),
     type: r.type === 'quote' ? 'Quote' : 'Inquiry',
-    name: safeCell(r.name),
-    phone: safeCell(r.phone),
-    email: safeCell(r.email),
-    subject: safeCell(r.subject),
-    company: safeCell(r.company),
-    message: safeCell(r.message),
-    extra: safeCell(extraText(r.extra)),
+    name: cell(r.name),
+    phone: cell(r.phone),
+    email: cell(r.email),
+    subject: cell(r.subject),
+    company: cell(r.company),
+    message: cell(r.message),
+    extra: cell(extraText(r.extra)),
     status: STATUS_LABELS[r.status] || r.status,
     created_at: r.created_at ? istFormat.format(new Date(r.created_at)) : '',
-    source_url: safeCell(r.source_url),
+    source_url: cell(r.source_url),
   };
 }
 
 exports.toCsv = (rows) =>
   '﻿' + // BOM so Excel opens UTF-8 (Hindi names etc.) correctly
-  stringify(rows.map(toRow), { header: true, columns: COLUMNS.map((c) => ({ key: c.key, header: c.header })) });
+  stringify(rows.map((r) => toRow(r, safeCell)), { header: true, columns: COLUMNS.map((c) => ({ key: c.key, header: c.header })) });
 
 exports.toXlsx = async (rows) => {
   const wb = new ExcelJS.Workbook();
@@ -66,7 +70,7 @@ exports.toXlsx = async (rows) => {
   const ws = wb.addWorksheet('Leads', { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.columns = COLUMNS;
   ws.getRow(1).font = { bold: true };
-  rows.forEach((r) => ws.addRow(toRow(r)));
+  rows.forEach((r) => ws.addRow(toRow(r, plainCell)));
   ws.autoFilter = { from: 'A1', to: { row: 1, column: COLUMNS.length } };
   return wb.xlsx.writeBuffer();
 };
