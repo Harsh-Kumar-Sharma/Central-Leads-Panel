@@ -84,7 +84,9 @@ ENV_FILE="$APP_DIR/backend/.env"
 [ -f "$ENV_FILE" ] || die "Missing $ENV_FILE (copy backend/.env.example and fill it in)"
 # Never fails (a missing key just returns ""), so it is safe under `set -Eeuo pipefail` + ERR trap.
 env_get() { { grep -E "^$1=" "$ENV_FILE" || true; } | tail -n1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e 's/\r$//'; }
-! grep -q "CHANGE_ME" "$ENV_FILE" || die "backend/.env still contains CHANGE_ME values - fill them in first"
+# Only real KEY=value lines count (comments may mention CHANGE_ME).
+UNFILLED="$(grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=.*CHANGE_ME' "$ENV_FILE" | cut -d= -f1 | tr -d ' ' | paste -sd, - || true)"
+[ -z "$UNFILLED" ] || die "backend/.env still has CHANGE_ME for: $UNFILLED"
 [ "$(env_get NODE_ENV)" = "production" ] || die "backend/.env must have NODE_ENV=production"
 [ "$(env_get JWT_SECRET | wc -c)" -gt 32 ] || die "backend/.env JWT_SECRET must be at least 32 characters"
 [ "$(env_get SECRET_ENCRYPTION_KEY | wc -c)" -gt 32 ] || die "backend/.env SECRET_ENCRYPTION_KEY is missing"
