@@ -5,6 +5,7 @@ import { useUiStore } from '../stores/ui';
 import AppSidebar from '../components/AppSidebar.vue';
 import AppHeader from '../components/AppHeader.vue';
 import ToastStack from '../components/ToastStack.vue';
+import AppFooter from '../components/AppFooter.vue';
 import { useNotificationsStore } from '../stores/notifications';
 
 const ui = useUiStore();
@@ -50,6 +51,7 @@ onBeforeUnmount(() => { clearInterval(timer); document.removeEventListener('visi
           </Transition>
         </RouterView>
       </main>
+      <AppFooter />
     </div>
   </div>
 </template>

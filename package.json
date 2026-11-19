@@ -1,0 +1,19 @@
+{
+  "name": "central-leads-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Central Leads Panel: Express API (backend/) + Vue dashboard (frontend/)",
+  "scripts": {
+    "deploy": "bash deploy/deploy.sh",
+    "deploy:no-pull": "bash deploy/deploy.sh --no-pull",
+    "deploy:rollback": "bash deploy/deploy.sh --rollback",
+    "pm2:start": "npm --prefix backend run pm2:start",
+    "pm2:reload": "npm --prefix backend run pm2:reload",
+    "pm2:restart": "npm --prefix backend run pm2:restart",
+    "pm2:stop": "npm --prefix backend run pm2:stop",
+    "pm2:status": "npm --prefix backend run pm2:status",
+    "pm2:logs": "npm --prefix backend run pm2:logs",
+    "migrate": "npm --prefix backend run migrate",
+    "build": "npm --prefix frontend run build"
+  }
+}

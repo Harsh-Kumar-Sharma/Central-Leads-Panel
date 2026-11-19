@@ -42,13 +42,13 @@ Log in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`, then change the password
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | MySQL 8 connection. Use a dedicated user with rights on this database only (not `root`). |
 | `JWT_SECRET` | ≥ 32 random chars. The server refuses to start in production with a weak secret. Generate: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
 | `JWT_EXPIRES_IN` | Session length, e.g. `12h` |
-| `CORS_PANEL_ORIGIN` | Dashboard origin(s), comma separated, e.g. `https://leads.example.com` |
+| `CORS_PANEL_ORIGIN` | Dashboard origin(s), comma separated, e.g. `https://clp.cpaleasing.com` |
 | `TRUST_PROXY` | `1` behind Nginx (so rate limits see the real client IP), `0` otherwise. The server warns at start-up if it is `0` in production. |
 | `HOST` | Interface the API listens on. Default `127.0.0.1`, so only Nginx on the same server can reach port 4000. |
 | `SEED_ADMIN_NAME`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Used only by `npm run seed` |
 | `TZ` | `Asia/Kolkata` |
 | `SECRET_ENCRYPTION_KEY` | 32 bytes (64 hex chars) that encrypt stored SMTP passwords. **Required in production.** Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. If it changes, re-enter the SMTP passwords. |
-| `APP_BASE_URL` | Public dashboard URL used in "View lead" email links, e.g. `https://leads.example.com` |
+| `APP_BASE_URL` | Public dashboard URL used in "View lead" email links, e.g. `https://clp.cpaleasing.com` |
 
 Recommended least-privilege MySQL user:
 
@@ -61,16 +61,57 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON CLP.* 
 
 ## 2. Production deployment (PM2 + Nginx)
 
-Example: dashboard and API on one domain, `https://leads.example.com`.
+Example: dashboard and API on one domain, `https://clp.cpaleasing.com`.
+
+### 2.0 Quick deploy with the script (recommended)
+
+Layout on the VPS: code in `/app/Central-Leads-Panel`, dashboard build in `/var/www/clp.cpaleasing.com`, Nginx sites in `/etc/nginx/sites-available/`.
+
+**First time:**
+
+```bash
+sudo apt install -y nginx git curl          # Node.js 20+ must already be installed
+sudo npm install -g pm2
+sudo mkdir -p /app && sudo chown "$USER" /app
+git clone https://github.com/Harsh-Kumar-Sharma/Central-Leads-Panel.git /app/Central-Leads-Panel
+cd /app/Central-Leads-Panel
+cp backend/.env.production.example backend/.env && nano backend/.env
+#   already set for clp.cpaleasing.com; fill every CHANGE_ME (DB, JWT_SECRET,
+#   SECRET_ENCRYPTION_KEY, seed admin). The deploy refuses to run while CHANGE_ME remains.
+bash deploy/deploy.sh --nginx                            # installs /etc/nginx/sites-available/clp.cpaleasing.com
+sudo certbot --nginx -d clp.cpaleasing.com                # HTTPS
+npm --prefix backend run seed                            # first super admin (once)
+pm2 startup                                              # run the command it prints, so PM2 survives reboots
+```
+
+**Every deploy after that:**
+
+```bash
+cd /app/Central-Leads-Panel && npm run deploy
+```
+
+What `deploy/deploy.sh` does: checks Node/PM2/`.env` → `git pull` (`main`) → `npm ci --omit=dev` → **`npm run migrate` before restart** → `pm2 startOrReload` + `pm2 save` → health check on `127.0.0.1:4000/api/health` (shows PM2 logs and stops if unhealthy) → builds the dashboard → swaps it into `/var/www/clp.cpaleasing.com` (previous build kept as `.prev`) → `nginx -t` + reload. It refuses to run twice at once and refuses to overwrite local changes.
+
+| Command (run in `/app/Central-Leads-Panel`) | Does |
+|---|---|
+| `npm run deploy` | Full deploy from `origin/main` |
+| `npm run deploy:no-pull` | Deploy the code already on disk |
+| `npm run deploy:rollback` | Put back the previous dashboard build |
+| `npm run pm2:status` / `pm2:logs` / `pm2:restart` / `pm2:stop` | Manage the API process |
+| `npm run migrate` | Run DB migrations only |
+
+Defaults: domain `clp.cpaleasing.com`, build in `/var/www/clp.cpaleasing.com`, Nginx site `/etc/nginx/sites-available/clp.cpaleasing.com`. They can be changed with environment variables: `DOMAIN`, `APP_DIR`, `WEB_ROOT`, `BRANCH`, `NGINX_SITE_NAME`.
+
+The sections below explain the same steps by hand.
 
 ### 2.1 API with PM2
 
 ```bash
 npm install -g pm2
-cd /var/www/central-leads-panel/backend
+cd /app/Central-Leads-Panel/backend
 npm ci --omit=dev
 cp .env.example .env    # NODE_ENV=production, strong JWT_SECRET, TRUST_PROXY=1,
-                        # CORS_PANEL_ORIGIN=https://leads.example.com
+                        # CORS_PANEL_ORIGIN=https://clp.cpaleasing.com
 npm run migrate
 npm run seed            # first deploy only
 pm2 start ecosystem.config.js
@@ -85,9 +126,11 @@ Useful: `pm2 logs central-leads-api`, `pm2 restart central-leads-api`, `pm2 stat
 ### 2.2 Dashboard build
 
 ```bash
-cd /var/www/central-leads-panel/frontend
+cd /app/Central-Leads-Panel/frontend
 npm ci
 npm run build           # output: frontend/dist
+sudo mkdir -p /var/www/clp.cpaleasing.com
+sudo rsync -a --delete dist/ /var/www/clp.cpaleasing.com/
 ```
 
 If the API is on a different domain than the dashboard, build with `VITE_API_BASE=https://api.example.com/api` (and set `VITE_PUBLIC_API_URL=https://api.example.com` so the integration snippets show the right URL).
@@ -97,10 +140,10 @@ If the API is on a different domain than the dashboard, build with `VITE_API_BAS
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name leads.example.com;
+    server_name clp.cpaleasing.com;
 
-    ssl_certificate     /etc/letsencrypt/live/leads.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/leads.example.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/clp.cpaleasing.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/clp.cpaleasing.com/privkey.pem;
 
     client_max_body_size 100k;
     server_tokens off;
@@ -132,7 +175,7 @@ server {
     }
 
     # Dashboard (Vue SPA)
-    root /var/www/central-leads-panel/frontend/dist;
+    root /var/www/clp.cpaleasing.com;
     index index.html;
     location / {
         try_files $uri $uri/ /index.html;
@@ -151,12 +194,12 @@ server {
 
 server {
     listen 80;
-    server_name leads.example.com;
+    server_name clp.cpaleasing.com;
     return 301 https://$host$request_uri;
 }
 ```
 
-Get a certificate with `certbot --nginx -d leads.example.com`. Do **not** expose port 4000 or MySQL 3306 publicly; firewall them (`ufw allow 80,443/tcp`, allow 3306 only from the app server).
+Get a certificate with `certbot --nginx -d clp.cpaleasing.com`. Do **not** expose port 4000 or MySQL 3306 publicly; firewall them (`ufw allow 80,443/tcp`, allow 3306 only from the app server).
 
 ### 2.4 Updating
 
@@ -177,7 +220,7 @@ cd ../frontend && npm ci && npm run build
 ### Endpoint
 
 ```
-POST https://YOUR-PANEL-DOMAIN/api/v1/leads
+POST https://clp.cpaleasing.com/api/v1/leads
 Content-Type: application/json
 X-Site-Key: sk_...
 ```
@@ -238,7 +281,7 @@ document.querySelector('#contact-form').addEventListener('submit', async (e) => 
     message: f.get('message'),
     website: f.get('website') || ''   // honeypot
   };
-  const res = await fetch('https://YOUR-PANEL-DOMAIN/api/v1/leads', {
+  const res = await fetch('https://clp.cpaleasing.com/api/v1/leads', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Site-Key': 'SITE_KEY_HERE' },
     body: JSON.stringify(body)
@@ -251,7 +294,7 @@ document.querySelector('#contact-form').addEventListener('submit', async (e) => 
 ### PHP / WordPress (server to server, preferred)
 
 ```php
-$resp = wp_remote_post('https://YOUR-PANEL-DOMAIN/api/v1/leads', [
+$resp = wp_remote_post('https://clp.cpaleasing.com/api/v1/leads', [
   'headers' => ['Content-Type' => 'application/json', 'X-Site-Key' => 'SITE_KEY_HERE'],
   'body'    => wp_json_encode([
     'type' => 'inquiry', 'name' => $name, 'email' => $email,
@@ -264,7 +307,7 @@ $resp = wp_remote_post('https://YOUR-PANEL-DOMAIN/api/v1/leads', [
 ### Node / Next.js (server route)
 
 ```js
-const res = await fetch('https://YOUR-PANEL-DOMAIN/api/v1/leads', {
+const res = await fetch('https://clp.cpaleasing.com/api/v1/leads', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'X-Site-Key': process.env.LEADS_SITE_KEY },
   body: JSON.stringify({ type: 'quote', name, email, phone, message })
